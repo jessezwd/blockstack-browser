@@ -1,4 +1,5 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 
 class SaveButton extends Component {
   static propTypes = {
@@ -12,10 +13,10 @@ class SaveButton extends Component {
       profileJustSaved: false
     }
 
-    this.triggerSave = (event) => {
-      this.setState({profileJustSaved: true})
+    this.triggerSave = () => {
+      this.setState({ profileJustSaved: true })
       setTimeout(() => {
-        this.setState({profileJustSaved: false})
+        this.setState({ profileJustSaved: false })
       }, 500)
       if (this.props.onSave) {
         this.props.onSave()
@@ -26,8 +27,8 @@ class SaveButton extends Component {
   render() {
     return (
       <div>
-      { this.state.profileJustSaved ?
-        <button className="btn btn-sm btn-success" disabled>
+      {this.state.profileJustSaved ?
+        <button className="btn btn-success" disabled>
             Saving...
         </button>
       :

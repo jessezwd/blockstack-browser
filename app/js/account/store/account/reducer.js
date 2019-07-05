@@ -1,12 +1,12 @@
 import * as types from './types'
 import { HDNode } from 'bitcoinjs-lib'
-import { getBitcoinAddressNode, getIdentityAddressNode } from '../../../utils'
-
+import { getBitcoinAddressNode } from '@utils'
 
 const initialState = {
-  accountCreated: false,
-  promptedForEmail: false,
-  encryptedBackupPhrase: null,
+  accountCreated: false, // persist
+  promptedForEmail: false, // persist
+  email: null, // persist
+  encryptedBackupPhrase: null, // persist
   identityAccount: {
     addresses: [],
     keypairs: []
@@ -19,13 +19,18 @@ const initialState = {
     address: null,
     balance: 0.0,
     withdrawal: {
+      txHex: null,
+      isBuilding: false,
+      isBroadcasting: false,
       inProgress: false,
       error: null,
-      recipient: null,
+      recipientAddress: null,
       success: false
     }
   },
-  viewedRecoveryCode: false
+  viewedRecoveryCode: false, // persist
+  recoveryCodeVerified: false,
+  connectedStorageAtLeastOnce: false // persist
 }
 
 function AccountReducer(state = initialState, action) {
@@ -42,13 +47,21 @@ function AccountReducer(state = initialState, action) {
         },
         bitcoinAccount: {
           publicKeychain: action.bitcoinPublicKeychain,
-          addresses: [
-            action.firstBitcoinAddress
-          ],
+          addresses: [action.firstBitcoinAddress],
           addressIndex: 0,
           balances: state.bitcoinAccount.balances
         }
       })
+    case types.UPDATE_EMAIL_ADDRESS:
+      return {
+        ...state,
+        email: action.email
+      }
+    case types.RECOVERY_CODE_VERIFIED:
+      return {
+        ...state,
+        recoveryCodeVerified: true
+      }
     case types.DELETE_ACCOUNT:
       return Object.assign({}, state, {
         accountCreated: false,
@@ -76,8 +89,10 @@ function AccountReducer(state = initialState, action) {
           publicKeychain: state.bitcoinAccount.publicKeychain,
           addresses: [
             ...state.bitcoinAccount.addresses,
-            getBitcoinAddressNode(HDNode.fromBase58(state.bitcoinAccount.publicKeychain),
-            state.bitcoinAccount.addressIndex + 1).getAddress()
+            getBitcoinAddressNode(
+              HDNode.fromBase58(state.bitcoinAccount.publicKeychain),
+              state.bitcoinAccount.addressIndex + 1
+            ).getAddress()
           ],
           addressIndex: state.bitcoinAccount.addressIndex + 1,
           balances: state.bitcoinAccount.balances
@@ -91,21 +106,110 @@ function AccountReducer(state = initialState, action) {
           balances: action.balances
         }
       })
-    case types.RESET_CORE_BALANCE_WITHDRAWAL:
-      return Object.assign({}, state, {
-        coreWallet: Object.assign({}, state.coreWallet, {
+    case types.BUILD_TRANSACTION:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
           withdrawal: {
-            inProgress: false,
+            txHex: null,
+            isBuilding: true,
+            isBroadcasting: false,
+            inProgress: true,
             error: null,
             success: false,
-            recipientAddress: null
+            recipientAddress: action.payload
           }
-        })
-      })
+        }
+      }
+    case types.BUILD_TRANSACTION_SUCCESS:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
+          withdrawal: {
+            ...state.coreWallet.withdrawal,
+            txHex: action.payload,
+            isBuilding: false
+          }
+        }
+      }
+    case types.BUILD_TRANSACTION_ERROR:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
+          withdrawal: {
+            ...state.coreWallet.withdrawal,
+            error: action.payload,
+            isBuilding: false,
+            inProgress: false
+          }
+        }
+      }
+    case types.BROADCAST_TRANSACTION:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
+          withdrawal: {
+            ...state.coreWallet.withdrawal,
+            txHex: action.payload,
+            isBroadcasting: true,
+            inProgress: true,
+            error: null,
+            success: false
+          }
+        }
+      }
+    case types.BROADCAST_TRANSACTION_SUCCESS:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
+          withdrawal: {
+            ...state.coreWallet.withdrawal,
+            isBroadcasting: false,
+            inProgress: false,
+            success: true
+          }
+        }
+      }
+    case types.BROADCAST_TRANSACTION_ERROR:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
+          withdrawal: {
+            ...state.coreWallet.withdrawal,
+            isBroadcasting: false,
+            inProgress: false,
+            error: action.payload
+          }
+        }
+      }
+    case types.RESET_CORE_BALANCE_WITHDRAWAL:
+      return {
+        ...state,
+        coreWallet: {
+          ...state.coreWallet,
+          withdrawal: {
+            txHex: null,
+            isBuilding: false,
+            isBroadcasting: false,
+            inProgress: false,
+            error: null,
+            success: false
+          }
+        }
+      }
     case types.WITHDRAWING_CORE_BALANCE:
       return Object.assign({}, state, {
         coreWallet: Object.assign({}, state.coreWallet, {
           withdrawal: {
+            txHex: null,
+            isBuilding: false,
+            isBroadcasting: false,
             inProgress: true,
             error: null,
             success: false,
@@ -134,7 +238,8 @@ function AccountReducer(state = initialState, action) {
       })
     case types.PROMPTED_FOR_EMAIL:
       return Object.assign({}, state, {
-        promptedForEmail: true
+        promptedForEmail: true,
+        email: action.email
       })
     case types.VIEWED_RECOVERY_CODE:
       return Object.assign({}, state, {
@@ -142,15 +247,29 @@ function AccountReducer(state = initialState, action) {
       })
     case types.INCREMENT_IDENTITY_ADDRESS_INDEX:
       return Object.assign({}, state, {
-        identityAccount: Object.assign({},
-          state.identityAccount,
-          {
-            addressIndex: state.identityAccount.addressIndex + 1
-          })
+        identityAccount: Object.assign({}, state.identityAccount, {
+          addressIndex: state.identityAccount.addressIndex + 1
+        })
+      })
+    case types.NEW_IDENTITY_ADDRESS:
+      return Object.assign({}, state, {
+        identityAccount: Object.assign({}, state.identityAccount, {
+          addresses: [
+            ...state.identityAccount.addresses,
+            action.keypair.address
+          ],
+          keypairs: [...state.identityAccount.keypairs, action.keypair]
+        })
+      })
+    case types.CONNECTED_STORAGE:
+      return Object.assign({}, state, {
+        connectedStorageAtLeastOnce: true
       })
     default:
       return state
   }
 }
+
+export { initialState as AccountInitialState }
 
 export default AccountReducer

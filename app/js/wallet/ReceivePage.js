@@ -1,8 +1,11 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
+import { QRCode } from 'react-qr-svg'
 
 import { AccountActions } from '../account/store/account'
+import Balance            from './components/Balance'
 
 function mapStateToProps(state) {
   return {
@@ -26,38 +29,33 @@ class ReceivePage extends Component {
     coreAPIPassword: PropTypes.string.isRequired
   }
 
-  constructor(props) {
-    super(props)
-  }
-
   componentWillMount() {
     this.props.getCoreWalletAddress(this.props.walletPaymentAddressUrl, this.props.coreAPIPassword)
   }
 
   render() {
+    const address = this.props.addresses[0]
+
     return (
       <div>
-        <h1 className="h1-modern">
-            Receive
-        </h1>
-        <p><i>
-          Send at least <strong>0.01 bitcoins</strong> to the address below to register a username.<br/>
-          All username registrations use funds from your wallet.
-        </i></p>
-
-        { this.props.coreWalletAddress ?
-        <div>
-          <h5>Send Bitcoins to this address</h5>
-          <div className="highlight highlight-wallet">
-            <pre>
-              <code>{this.props.coreWalletAddress}</code>
-            </pre>
+        <Balance />
+        {address ?
+          <div>
+            <div className="qrcode-wallet">
+              <QRCode
+                value={address}
+              />
+            </div>
+            <div className="highlight-wallet text-center">
+              <pre>
+                <code>{address}</code>
+              </pre>
+            </div>
           </div>
-        </div>
         :
-        <div>
-          <h5>Loading address...</h5>
-        </div>
+          <div>
+            <h5>Loading address...</h5>
+          </div>
         }
       </div>
     )

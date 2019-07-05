@@ -1,7 +1,6 @@
-import hasProp from 'hasprop'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('utils/name-utils.js')
+const logger = log4js.getLogger(__filename)
 
 export function isABlockstackName(s) {
   return /^[a-z0-9_-]+\.[a-z0-9_-]+$/.test(s)
@@ -17,24 +16,25 @@ export function isABlockstackAppName(s) {
 
 export function hasNameBeenPreordered(domainName, localIdentities) {
   let nameHasBeenPreordered = false
-  Object.keys(localIdentities).map((localDomainName) => {
-    if (localDomainName === domainName) {
+  localIdentities.map((identity) => {
+    if (identity.username === domainName) {
       nameHasBeenPreordered = true
-      return
     }
+    return null
   })
   return nameHasBeenPreordered
 }
 
 export function isNameAvailable(lookupUrl, domainName) {
+  console.log(domainName)
   return new Promise((resolve, reject) => {
     const url = lookupUrl.replace('{name}', domainName)
     fetch(url)
-      .then((response) => {
-        if(response.ok) {
-            resolve(false)
+      .then(response => {
+        if (response.ok) {
+          resolve(false)
         } else {
-          if(response.status == 404) {
+          if (response.status === 404) {
             resolve(true)
           } else {
             logger.error('isNameAvailable', response)
@@ -42,11 +42,36 @@ export function isNameAvailable(lookupUrl, domainName) {
           }
         }
       })
-      .catch((error) => {
+      .catch(error => {
         logger.error('isNameAvailable', error)
         reject(error)
       })
   })
+}
+
+/**
+ * Performs a basic check to differentiate subdomains from other Blockstack
+ * names
+ * @param  {String}  name a Blockstack name
+ * @return {Boolean} `true` if it is a subdomain, otherwise false
+ */
+export function isSubdomain(name) {
+  return name.split('.').length === 3
+}
+
+/**
+ * Given a blockstack subdomain name, returns the
+ * parent domain.
+ * @param  {String} name a Blockstack subdomain name
+ * @return {String}  the parent domain without leading period
+ */
+export function getNameSuffix(name) {
+  if (!isSubdomain(name)) {
+    throw new Error('Only works with subdomains')
+  }
+  const nameTokens = name.split('.')
+  const suffix = name.split(`${nameTokens[0]}.`)[1]
+  return suffix
 }
 
 export function getNamePrices(priceUrl, domainName) {
@@ -56,24 +81,26 @@ export function getNamePrices(priceUrl, domainName) {
       return
     }
 
-    const url = priceUrl.replace('{name}', domainName)
+    const url = `${priceUrl.replace('{name}', domainName)}?single_sig=1`
 
-    fetch(url).then(
-
-    ).then((response) => {
-      if (response.ok) {
-        response.text().then((responseText) => JSON.parse(responseText))
-        .then((responseJson) => {
-          resolve(responseJson)
-        })
-      } else {
-        logger.error('getNamePrices: error parsing price result')
-        reject('Error')
-      }
-    })
-    .catch((error) => {
-      logger.error('getNamePrices: error retrieving price', error)
-      reject(error)
-    })
+    fetch(url)
+      .then()
+      .then(response => {
+        if (response.ok) {
+          response
+            .text()
+            .then(responseText => JSON.parse(responseText))
+            .then(responseJson => {
+              resolve(responseJson)
+            })
+        } else {
+          logger.error('getNamePrices: error parsing price result')
+          reject('Error')
+        }
+      })
+      .catch(error => {
+        logger.error('getNamePrices: error retrieving price', error)
+        reject(error)
+      })
   })
 }

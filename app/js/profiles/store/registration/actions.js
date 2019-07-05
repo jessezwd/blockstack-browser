@@ -1,21 +1,24 @@
 import * as types from './types'
-import { makeProfileZoneFile } from 'blockstack'
-import { IdentityActions } from  '../identity'
-import { uploadProfile } from '../../../storage/utils'
 import {
-  signProfileForUpload, authorizationHeaderValue
-} from '../../../utils'
-import { DEFAULT_PROFILE } from '../../../utils/profile-utils'
+  makeProfileZoneFile,
+  transactions,
+  config,
+  network,
+  safety
+} from 'blockstack'
+import { uploadProfile } from '../../../account/utils'
+import { IdentityActions } from '../identity'
+import { signProfileForUpload, authorizationHeaderValue } from '@utils'
+import { DEFAULT_PROFILE } from '@utils/profile-utils'
+import { isSubdomain, getNameSuffix } from '@utils/name-utils'
+import { notify } from 'reapop'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('profiles/store/registration/actions.js')
+const logger = log4js.getLogger(__filename)
 
-
-function profileUploading() {
-  return {
-    type: types.PROFILE_UPLOADING
-  }
-}
+const profileUploading = () => ({
+  type: types.PROFILE_UPLOADING
+})
 
 function profileUploadError(error) {
   return {
@@ -50,69 +53,246 @@ function registrationError(error) {
 }
 
 function beforeRegister() {
-  logger.trace('beforeRegister')
+  logger.info('beforeRegister')
   return dispatch => {
     dispatch(registrationBeforeSubmit())
   }
 }
 
-function registerName(api, domainName, ownerAddress, keypair) {
-  logger.trace(`registerName: domainName: ${domainName}`)
-  return dispatch => {
-    logger.debug(`Signing a blank default profile for ${domainName}`)
+async function registerSubdomain(
+  api,
+  domainName,
+  identityIndex,
+  ownerAddress,
+  zoneFile
+) {
+  let nameSuffix = null
 
-    const signedProfileTokenData = signProfileForUpload(DEFAULT_PROFILE, keypair)
+  nameSuffix = getNameSuffix(domainName)
 
-    dispatch(profileUploading())
-    logger.trace(`Uploading ${domainName} profile...`)
-    return uploadProfile(api, domainName, signedProfileTokenData, true).then((profileUrl) => {
-      logger.trace(`Uploading ${domainName} profiled succeeded.`)
-      const tokenFileUrl = profileUrl
-      logger.debug(`tokenFileUrl: ${tokenFileUrl}`)
+  logger.debug(`registerName: ${domainName} is a subdomain of ${nameSuffix}`)
 
-      logger.trace('Making profile zonefile...')
-      const zoneFile = makeProfileZoneFile(domainName, tokenFileUrl)
+  const registerUrl = api.subdomains[nameSuffix].registerUrl
 
-      const requestHeaders = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: authorizationHeaderValue(api.coreAPIPassword)
-      }
+  const registrationRequestBody = JSON.stringify({
+    name: domainName.split('.')[0],
+    owner_address: ownerAddress,
+    zonefile: zoneFile
+  })
 
-      const requestBody = JSON.stringify({
-        name: domainName,
-        owner_address: ownerAddress,
-        zonefile: zoneFile,
-        min_confs: 0
-      })
+  const requestHeaders = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    Authorization: authorizationHeaderValue(api.coreAPIPassword)
+  }
 
-      dispatch(registrationSubmitting())
-      logger.trace(`Submitting registration for ${domainName} to Core node at ${api.registerUrl}`)
-      return fetch(api.registerUrl, {
-        method: 'POST',
-        headers: requestHeaders,
-        body: requestBody
-      })
-        .then((response) => response.text())
-        .then((responseText) => JSON.parse(responseText))
-        .then((responseJson) => {
-          if (responseJson.error) {
-            logger.error(responseJson.error)
-            dispatch(registrationError(responseJson.error))
-          } else {
-            logger.debug(`Successfully submitted registration for ${domainName}`)
-            dispatch(registrationSubmitted())
-            IdentityActions.createNewIdentityFromDomain(domainName, ownerAddress)
-          }
-        })
-        .catch((error) => {
-          logger.error('registerName: error POSTing regitsration to Core', error)
-          dispatch(registrationError(error))
-        })
-    }).catch((error) => {
-      logger.error('registerName: error uploading profile', error)
-      dispatch(profileUploadError(error))
+  logger.info(`Submitting registration for ${domainName} to ${registerUrl}`)
+
+  const response = await fetch(registerUrl, {
+    method: 'POST',
+    headers: requestHeaders,
+    body: registrationRequestBody
+  })
+
+  if (!response.ok) {
+    logger.error(
+      `Subdomain registrar responded with status code ${response.status}`
+    )
+
+    return Promise.reject({
+      error: 'Failed to register username',
+      status: response.status
     })
+  }
+
+  const responseText = await response.text()
+
+  return JSON.parse(responseText)
+}
+
+function registerDomain(
+  myNet,
+  tx,
+  domainName,
+  identityIndex,
+  ownerAddress,
+  paymentKey,
+  zoneFile
+) {
+  if (!paymentKey) {
+    logger.error(
+      'registerName: payment key not provided for non-subdomain registration'
+    )
+    return Promise.reject('Missing payment key')
+  }
+
+  const compressedKey = `${paymentKey}01`
+  const coercedAddress = myNet.coerceAddress(ownerAddress)
+
+  let preorderTx = ''
+  let registerTx = ''
+
+  return safety
+    .addressCanReceiveName(ownerAddress)
+    .then(canReceive => {
+      if (!canReceive) {
+        return Promise.reject(`Address ${ownerAddress} cannot receive names.`)
+      }
+      return safety.isNameValid(domainName)
+    })
+    .then(nameValid => {
+      if (!nameValid) {
+        return Promise.reject(`Name ${domainName} is not valid`)
+      }
+      return true
+    })
+    .then(() => tx.makePreorder(domainName, coercedAddress, compressedKey))
+    .then(rawtx => {
+      preorderTx = rawtx
+      return rawtx
+    })
+    .then(rawtx => {
+      myNet.modifyUTXOSetFrom(preorderTx)
+      return rawtx
+    })
+    .then(() =>
+      tx.makeRegister(domainName, coercedAddress, compressedKey, zoneFile)
+    )
+    .then(rawtx => {
+      registerTx = rawtx
+      return rawtx
+    })
+    .then(() => {
+      // make sure we don't double-spend the register before it is broadcasted.
+      myNet.modifyUTXOSetFrom(registerTx)
+    })
+    .then(() => {
+      logger.debug(
+        `Sending registration to transaction broadcaster at ${
+          myNet.broadcastServiceUrl
+        }`
+      )
+      return myNet.broadcastNameRegistration(preorderTx, registerTx, zoneFile)
+    })
+}
+
+const registerName = (
+  api,
+  domainName,
+  identity,
+  identityIndex,
+  ownerAddress,
+  keypair,
+  paymentKey = null
+) => async dispatch => {
+  logger.info(`registerName: domainName: ${domainName}`)
+  logger.debug(`Signing a new profile for ${domainName}`)
+
+  const profile = identity.profile || DEFAULT_PROFILE
+  const signedProfileTokenData = signProfileForUpload(profile, keypair, api)
+  dispatch(profileUploading())
+  logger.info(`Uploading ${domainName} profile...`)
+  try {
+    const profileUrl = await uploadProfile(
+      api,
+      identity,
+      keypair,
+      signedProfileTokenData
+    )
+    logger.info(`Uploading ${domainName} profiled succeeded.`)
+    const tokenFileUrl = profileUrl
+    logger.debug(`tokenFileUrl: ${tokenFileUrl}`)
+    logger.info('Making profile zonefile...')
+    const zoneFile = makeProfileZoneFile(domainName, tokenFileUrl)
+    const nameIsSubdomain = isSubdomain(domainName)
+    dispatch(registrationSubmitting())
+    if (nameIsSubdomain) {
+      try {
+        const res = await registerSubdomain(
+          api,
+          domainName,
+          identityIndex,
+          ownerAddress,
+          zoneFile
+        )
+
+        if (res.error) {
+          logger.error(res.error)
+          let message =
+            `Sorry, something went wrong while registering ${domainName}. ` +
+            'You can try to register again later from your profile page. Some ' +
+            'apps may be unusable until you do.'
+          if (res.status === 409) {
+            message =
+              "Sorry, it looks like we weren't able to process your name registration. Please contact us at support@blockstack.org for help. Some apps may be unusable until you register an ID."
+          }
+          dispatch(registrationError(message))
+          dispatch(
+            notify({
+              title: 'Username Registration Failed',
+              message,
+              status: 'error',
+              dismissAfter: 6000,
+              dismissible: true,
+              closeButton: true,
+              position: 'b'
+            })
+          )
+        } else {
+          logger.debug(`Successfully submitted registration for ${domainName}`)
+          dispatch(registrationSubmitted())
+          dispatch(IdentityActions.addUsername(identityIndex, domainName))
+        }
+      } catch (e) {
+        logger.error('registerName: error POSTing registration to registrar', e)
+        let message =
+          `Sorry, something went wrong while registering ${domainName}. ` +
+          'You can try to register again later from your profile page. Some ' +
+          'apps may be unusable until you do.'
+        if (e.status === 409) {
+          message =
+            "Sorry, it looks like we weren't able to process your name registration. Please contact us at support@blockstack.org for help. Some apps may be unusable until you register an ID."
+        }
+        dispatch(registrationError(message))
+        throw new Error(message)
+      }
+    } else {
+      // paid name
+      if (api.regTestMode) {
+        logger.info('Using regtest network')
+        config.network = network.defaults.LOCAL_REGTEST
+        // browser regtest environment uses 6270
+        config.network.blockstackAPIUrl = 'http://localhost:6270'
+      }
+      const myNet = config.network
+
+      try {
+        const response = await registerDomain(
+          myNet,
+          transactions,
+          domainName,
+          identityIndex,
+          ownerAddress,
+          paymentKey,
+          zoneFile
+        )
+        if (response.status && response.status !== 409) {
+          logger.debug(`Successfully submitted registration for ${domainName}`)
+          dispatch(registrationSubmitted())
+          dispatch(IdentityActions.addUsername(identityIndex, domainName))
+        } else {
+          logger.error(response)
+          dispatch(registrationError(response))
+        }
+      } catch (e) {
+        logger.error('registerName: error uploading profile', e)
+        dispatch(profileUploadError(e.message))
+        throw e
+      }
+    }
+  } catch (e) {
+    logger.error('registerName: error', e)
+    dispatch(registrationError(e.message))
   }
 }
 
@@ -124,7 +304,9 @@ const RegistrationActions = {
   registrationBeforeSubmit,
   registrationSubmitting,
   registrationSubmitted,
-  registrationError
+  registrationError,
+  registerSubdomain,
+  registerDomain
 }
 
 export default RegistrationActions

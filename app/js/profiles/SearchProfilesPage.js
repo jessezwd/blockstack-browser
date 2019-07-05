@@ -1,4 +1,5 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
 
@@ -6,7 +7,7 @@ import SearchItem from './components/SearchItem'
 import { SearchActions } from './store/search/index'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('profiles/SearchProfilesPage.js')
+const logger = log4js.getLogger(__filename)
 
 function mapStateToProps(state) {
   return {
@@ -51,10 +52,10 @@ class SearchPage extends Component {
   }
 
   componentHasNewRouteParams(routeParams) {
-    logger.trace('componentHasNewRouteParams')
+    logger.info('componentHasNewRouteParams')
     logger.debug(`Searching for ${routeParams.query}...`)
     this.props.searchIdentities(routeParams.query,
-      this.props.api.searchUrl, this.props.api.nameLookupUrl)
+      this.props.api.searchServiceUrl, this.props.api.nameLookupUrl)
   }
 
   render() {
@@ -64,17 +65,16 @@ class SearchPage extends Component {
           <ul
             className="list-group"
           >
-            {this.state.searchResults.map((result) => {
-              if (result.profile && result.username) {
-                return (
+            {
+              this.state.searchResults.map((result) => (
+                result.profile && result.username &&
                   <SearchItem
                     key={`${result.username}.id`}
                     domainName={`${result.username}.id`}
                     profile={result.profile}
                   />
-                )
-              }
-            })}
+              ))
+            }
           </ul>
         :
           <div>

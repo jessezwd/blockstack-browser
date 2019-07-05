@@ -18,7 +18,7 @@ function AvailabilityReducer(state = initialState, action) {
             error: null
           })
         }),
-        lastNameEntered: action.domainName
+        lastNameEntered: action.domainName.split('.')[0]
       })
     }
     case types.NAME_AVAILABLE:
@@ -42,7 +42,7 @@ function AvailabilityReducer(state = initialState, action) {
         }),
         lastNameEntered: state.lastNameEntered
       })
-    case types.NAME_AVAILABILITIY_ERROR:
+    case types.NAME_AVAILABILITY_ERROR:
       return Object.assign({}, state, {
         names: Object.assign({}, state.names, {
           [action.domainName]: Object.assign({}, state.names[action.domainName],

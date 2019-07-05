@@ -1,42 +1,44 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
 
-import AccountSidebar from './components/AccountSidebar'
-import PageHeader from '../components/PageHeader'
-import StatusBar from '../components/StatusBar'
+import SecondaryNavBar from '@components/SecondaryNavBar'
+import Navbar from '@components/Navbar'
+
+function mapStateToProps(state) {
+  return {
+    storageConnected: state.settings.api.storageConnected
+  }
+}
 
 function mapDispatchToProps(dispatch) {
   return bindActionCreators({}, dispatch)
 }
 
-class AccountApp extends Component {
+export class AccountApp extends Component {
   static propTypes = {
-    children: PropTypes.object
+    children: PropTypes.object,
+    storageConnected: PropTypes.bool.isRequired,
+    location: PropTypes.object.isRequired
   }
 
   constructor(props) {
     super(props)
-
-    this.state = { }
+    this.state = {}
   }
 
   render() {
-    const childPath = this.props.children.props.route.path
-    const activeTabUrl = `/account/${childPath}`
-
     return (
-      <div className="body-inner bkg-white">
-        <StatusBar />
-        <PageHeader title="Account" />
-        <div className="container vertical-split-content">
+      <div>
+        <Navbar activeTab="settings" />
+        {this.props.location.pathname === '/account' || !this.props.storageConnected ? null : (
+          <SecondaryNavBar leftButtonTitle="Back" leftButtonLink="/account" />
+        )}
+
+        <div className="container-fluid vertical-split-content">
           <div className="row">
-            <div className="col-md-3">
-              <AccountSidebar activeTab={activeTabUrl} />
-            </div>
-            <div className="col-md-9">
-              {this.props.children}
-            </div>
+            <div className="w-100">{this.props.children}</div>
           </div>
         </div>
       </div>
@@ -44,4 +46,4 @@ class AccountApp extends Component {
   }
 }
 
-export default connect(null, mapDispatchToProps)(AccountApp)
+export default connect(mapStateToProps, mapDispatchToProps)(AccountApp)

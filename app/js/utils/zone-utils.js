@@ -3,7 +3,7 @@ import { getProfileFromTokens } from './profile-utils'
 import { parseZoneFile } from 'zone-file'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('utils/zone-utils.js')
+const logger = log4js.getLogger(__filename)
 
 export function getTokenFileUrlFromZoneFile(zoneFileJson) {
   if (!zoneFileJson.hasOwnProperty('uri')) {
@@ -62,16 +62,23 @@ export function resolveZoneFileToProfile(zoneFile, publicKeyOrAddress) {
 
     if (tokenFileUrl) {
       fetch(tokenFileUrl)
-        .then((response) => response.text())
-        .then((responseText) => JSON.parse(responseText))
-        .then((responseJson) => {
+        .catch(error => {
+          logger.error(
+            'resolveZoneFileToProfile: error fetching token file without CORS proxy',
+            error
+          )
+          return proxyFetch(tokenFileUrl)
+        })
+        .then(response => response.text())
+        .then(responseText => JSON.parse(responseText))
+        .then(responseJson => {
           const tokenRecords = responseJson
           const profile = getProfileFromTokens(tokenRecords, publicKeyOrAddress)
 
           resolve(profile)
           return
         })
-        .catch((error) => {
+        .catch(error => {
           logger.error(`resolveZoneFileToProfile: error fetching token file ${tokenFileUrl}`, error)
           reject(error)
         })

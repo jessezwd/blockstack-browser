@@ -1,14 +1,16 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
 
-import Alert from '../components/Alert'
-import InputGroup from '../components/InputGroup'
+import Alert from '@components/Alert'
+import InputGroup from '@components/InputGroup'
+import SimpleButton from '@components/SimpleButton'
 import { AccountActions } from './store/account'
-import { decrypt, encrypt } from '../utils'
+import { decrypt, encrypt } from '@utils'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('account/ChangePasswordPage.js')
+const logger = log4js.getLogger(__filename)
 
 function mapStateToProps(state) {
   return {
@@ -48,76 +50,102 @@ class ChangePasswordPage extends Component {
   }
 
   updateAlert(alertStatus, alertMessage) {
-    logger.trace(`updateAlert: alertStatus: ${alertStatus}, alertMessage ${alertMessage}`)
+    logger.info(`updateAlert: alertStatus: ${alertStatus}, alertMessage ${alertMessage}`)
     this.setState({
-      alerts: [{
-        status: alertStatus,
-        message: alertMessage
-      }]
+      alerts: [
+        {
+          status: alertStatus,
+          message: alertMessage
+        }
+      ]
     })
   }
 
   reencryptMnemonic() {
-    logger.trace('reencryptMnemonic')
+    logger.info('reencryptMnemonic')
+    this.setState({
+      isProcessing: true,
+      alerts: []
+    })
+
     const currentPassword = this.state.currentPassword
     const newPassword = this.state.newPassword
     const newPassword2 = this.state.newPassword2
     const dataBuffer = new Buffer(this.props.encryptedBackupPhrase, 'hex')
-    logger.debug('Trying to decrypt backup phrase...')
-    decrypt(dataBuffer, currentPassword)
-    .then((plaintextBuffer) => {
-      logger.debug('Backup phrase successfully decrypted')
-      if (newPassword.length < 8) {
-        this.updateAlert('danger', 'New password must be at least 8 characters')
-      } else {
-        if (newPassword !== newPassword2) {
-          this.updateAlert('danger', 'New passwords must match')
-        } else {
-          logger.debug('Trying to re-encrypt backup phrase with new password...')
-          encrypt(plaintextBuffer, newPassword)
-          .then((ciphertextBuffer) => {
-            this.props.updateBackupPhrase(ciphertextBuffer.toString('hex'))
-            this.updateAlert('success', 'Password updated!')
-            this.setState({
-              currentPassword: '',
-              newPassword: '',
-              newPassword2: ''
-            })
+
+    if (newPassword.length < 8) {
+      this.updateAlert('danger', 'New password must be at least 8 characters')
+      this.setState({ isProcessing: false })
+      return
+    } else if (newPassword !== newPassword2) {
+      this.updateAlert('danger', 'New passwords must match')
+      this.setState({ isProcessing: false })
+      return
+    }
+
+    logger.debug('Trying to decrypt recovery phrase...')
+    decrypt(dataBuffer, currentPassword).then(
+      plaintextBuffer => {
+        logger.debug('Recovery phrase successfully decrypted')
+        logger.debug('Trying to re-encrypt recovery phrase with new password...')
+        encrypt(plaintextBuffer, newPassword).then(ciphertextBuffer => {
+          this.props.updateBackupPhrase(ciphertextBuffer.toString('hex'))
+          this.updateAlert('success', 'Password updated!')
+          this.setState({
+            currentPassword: '',
+            newPassword: '',
+            newPassword2: '',
+            isProcessing: false
           })
-        }
+        })
+      },
+      () => {
+        logger.error('Invalid password')
+        this.updateAlert('danger', 'Incorrect password')
+        this.setState({ isProcessing: false })
       }
-    }, (error) => {
-      logger.error('Invalid password')
-      this.updateAlert('danger', 'Incorrect password')
-    })
+    )
   }
 
   render() {
     return (
-      <div>
-        {
-          this.state.alerts.map((alert, index) => {
-            return (
-              <Alert key={index} message={alert.message} status={alert.status} />
-            )
-          })}
+      <div className="m-b-100">
+        <h3 className="container-fluid m-t-10">Change Password</h3>
+        {this.state.alerts.map((alert, index) => (
+          <Alert key={index} message={alert.message} status={alert.status} />
+        ))}
         <div>
           <InputGroup
-            name="currentPassword" label="Current Password" type="password"
-            data={this.state} onChange={this.onValueChange}
+            name="currentPassword"
+            label="Current Password"
+            type="password"
+            data={this.state}
+            onChange={this.onValueChange}
           />
           <InputGroup
-            name="newPassword" label="New Password" type="password"
-            data={this.state} onChange={this.onValueChange}
+            name="newPassword"
+            label="New Password"
+            type="password"
+            data={this.state}
+            onChange={this.onValueChange}
           />
           <InputGroup
-            name="newPassword2" label="New Password" type="password"
-            data={this.state} onChange={this.onValueChange}
+            name="newPassword2"
+            label="New Password"
+            type="password"
+            data={this.state}
+            onChange={this.onValueChange}
+            onReturnKeyPress={this.reencryptMnemonic}
           />
-          <div className="container m-t-40">
-            <button className="btn btn-primary" onClick={this.reencryptMnemonic}>
+          <div className="container-fluid m-t-40">
+            <SimpleButton
+              type="primary"
+              onClick={this.reencryptMnemonic}
+              loading={this.state.isProcessing}
+              block
+            >
               Update Password
-            </button>
+            </SimpleButton>
           </div>
         </div>
       </div>

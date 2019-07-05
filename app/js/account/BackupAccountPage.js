@@ -1,15 +1,20 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { connect } from 'react-redux'
 import { bindActionCreators } from 'redux'
 
-import Alert from '../components/Alert'
-import InputGroup from '../components/InputGroup'
-import { decrypt } from '../utils'
+import { HDNode } from 'bitcoinjs-lib'
+import QRCode from 'qrcode.react'
+
+import Alert from '@components/Alert'
+import SimpleButton from '@components/SimpleButton'
+import InputGroup from '@components/InputGroup'
+import { decrypt } from '@utils'
 import log4js from 'log4js'
 
 import { AccountActions } from './store/account'
 
-const logger = log4js.getLogger('account/BackupAccountPage.js')
+const logger = log4js.getLogger(__filename)
 
 function mapStateToProps(state) {
   return {
@@ -34,7 +39,9 @@ class BackupAccountPage extends Component {
     this.state = {
       decryptedBackupPhrase: null,
       password: '',
-      alerts: []
+      alerts: [],
+      keychain: null,
+      isDecrypting: false
     }
 
     this.onChange = this.onChange.bind(this)
@@ -51,82 +58,195 @@ class BackupAccountPage extends Component {
   }
 
   updateAlert(alertStatus, alertMessage) {
-    logger.trace(`updateAlert: alertStatus: ${alertStatus}, alertMessage ${alertMessage}`)
+    logger.info(
+      `updateAlert: alertStatus: ${alertStatus}, alertMessage ${alertMessage}`
+    )
     this.setState({
       alerts: [{ status: alertStatus, message: alertMessage }]
     })
   }
 
   decryptBackupPhrase() {
-    logger.trace('decryptBackupPhrase')
+    logger.info('decryptBackupPhrase')
 
     const password = this.state.password
     const dataBuffer = new Buffer(this.props.encryptedBackupPhrase, 'hex')
-    logger.debug('Trying to decrypt backup phrase...')
-    decrypt(dataBuffer, password)
-    .then((plaintextBuffer) => {
-      logger.debug('Backup phrase successfully decrypted')
-      this.updateAlert('success', 'Backup phrase decrypted')
-      this.props.displayedRecoveryCode()
-      this.setState({
-        decryptedBackupPhrase: plaintextBuffer.toString()
-      })
-    }, (error) => {
-      logger.error('Invalid password')
-      this.updateAlert('danger', 'Invalid password')
-    })
+    this.setState({ isDecrypting: true })
+
+    logger.debug('Trying to decrypt recovery phrase...')
+    decrypt(dataBuffer, password).then(
+      async plaintextBuffer => {
+        logger.debug('Keychain phrase successfully decrypted')
+        const bip39 = await import(/* webpackChunkName: 'bip39' */ 'bip39')
+        const seed = bip39.mnemonicToSeed(plaintextBuffer.toString())
+        const keychain = HDNode.fromSeedBuffer(seed)
+        this.props.displayedRecoveryCode()
+        this.setState({
+          isDecrypting: false,
+          decryptedBackupPhrase: plaintextBuffer.toString(),
+          keychain
+        })
+      },
+      () => {
+        logger.error('Invalid password')
+        this.updateAlert('danger', 'Invalid password')
+        this.setState({ isDecrypting: false })
+      }
+    )
   }
 
   render() {
+    const { alerts, keychain, decryptedBackupPhrase, isDecrypting } = this.state
+    const b64EncryptedBackupPhrase = new Buffer(
+      this.props.encryptedBackupPhrase,
+      'hex'
+    ).toString('base64')
+
     return (
       <div>
-        {
-          this.state.alerts.map((alert, index) => {
-            return (
-              <Alert key={index} message={alert.message} status={alert.status} />
-            )
-          })
-        }
-        {
-          this.state.decryptedBackupPhrase ?
-            <div>
+        <div className="container-fluid">
+          <div className="row">
+            <div className="col">
+              <h3>Magic Recovery Code</h3>
               <p>
                 <i>
-                  Write down the backup phrase below and keep it safe.
-                  Anyone who has it will be able to regain access to your account.
+                  Scan or enter the recovery code with your password to restore
+                  your account or sign in on other devices.
                 </i>
               </p>
-
+            </div>
+          </div>
+          <div className="row m-b-50">
+            <div className="col col-sm-4 col-12">
+              <QuickQR data={b64EncryptedBackupPhrase} />
+            </div>
+            <div className="col col-sm-8 col-12">
               <div className="card">
-                <div className="card-header">
-                  Backup Phrase
-                </div>
-                <div className="card-block">
+                <div className="card-header">Recovery Code</div>
+                <div className="card-block backup-phrase-container">
                   <p className="card-text">
-                    {this.state.decryptedBackupPhrase}
+                    <code>{b64EncryptedBackupPhrase}</code>
                   </p>
                 </div>
               </div>
             </div>
-          :
-            <div>
-              <p>
-                <i>Enter your password to view your backup phrase and backup your account.</i>
-              </p>
-              <InputGroup
-                name="password" label="Password" type="password"
-                data={this.state} onChange={this.onChange}
-              />
-              <div className="container m-t-40">
-                <button className="btn btn-primary" onClick={this.decryptBackupPhrase}>
-                  Decrypt Backup Phrase
-                </button>
+          </div>
+        </div>
+
+        <div className="container-fluid">
+          <div className="row">
+            <div className="col">
+              {alerts.map((alert, index) => (
+                <Alert
+                  key={index}
+                  message={alert.message}
+                  status={alert.status}
+                />
+              ))}
+              <h3>Secret Recovery Key</h3>
+            </div>
+          </div>
+        </div>
+        {decryptedBackupPhrase ? (
+          <div className="container-fluid m-b-100">
+            <div className="row">
+              <div className="col">
+                <p>
+                  <i>
+                    Write down the secret phrase below and keep it safe, or scan
+                    it to recover your account. Anyone who has it will have full
+                    access your Blockstack ID, so keep it safe!
+                  </i>
+                </p>
               </div>
             </div>
-        }
+
+            <div className="row">
+              <div className="col col-sm-4 col-12">
+                <QuickQR data={decryptedBackupPhrase} />
+              </div>
+              <div className="col col-sm-8 col-12">
+                <div className="card">
+                  <div className="card-header">Secret Recovery Key</div>
+                  <div className="card-block backup-phrase-container">
+                    <p className="card-text">
+                      <code>{decryptedBackupPhrase}</code>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <hr className="m-t-40 m-b-50" />
+
+            <div className="row">
+              <div className="col">
+                <p>
+                  <strong>Info for Developers</strong>
+                </p>
+                <p>
+                  Private Key (WIF) — <code>{keychain.keyPair.toWIF()}</code>
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="container-fluid p-0 m-b-100">
+            <div className="row">
+              <div className="col">
+                <p className="container-fluid">
+                  <i>
+                    Enter your password to view and backup your secret recovery
+                    phrase.
+                  </i>
+                </p>
+                <InputGroup
+                  name="password"
+                  label="Password"
+                  type="password"
+                  data={this.state}
+                  onChange={this.onChange}
+                  onReturnKeyPress={this.decryptBackupPhrase}
+                />
+                <div className="container-fluid m-t-40">
+                  <SimpleButton
+                    type="primary"
+                    loading={isDecrypting}
+                    onClick={this.decryptBackupPhrase}
+                    block
+                  >
+                    Display Keychain Phrase
+                  </SimpleButton>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 }
 
-export default connect(mapStateToProps, mapDispatchToProps)(BackupAccountPage)
+const QuickQR = ({ data }) => (
+  <div
+    className="qr-wrap"
+    style={{
+      maxWidth: 320,
+      padding: 20,
+      margin: '0 auto 20px',
+      borderRadius: 4,
+      boxShadow: '0 1px 4px rgba(0, 0, 0, 0.2)'
+    }}
+  >
+    <QRCode value={data} size="256" style={{ width: '100%' }} />
+  </div>
+)
+
+QuickQR.propTypes = {
+  data: PropTypes.string
+}
+
+export default connect(
+  mapStateToProps,
+  mapDispatchToProps
+)(BackupAccountPage)

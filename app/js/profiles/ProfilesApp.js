@@ -1,14 +1,12 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
-import { Link } from 'react-router'
 
-import HomeButton from '../components/HomeButton'
-import SearchBar from './components/SearchBar'
-import StatusBar from '../components/StatusBar'
+import Navbar from '../components/Navbar'
 
 
-function mapStateToProps(state) {
+function mapStateToProps() {
   return {
   }
 }
@@ -19,35 +17,20 @@ function mapDispatchToProps(dispatch) {
 
 class ProfilesApp extends Component {
   static propTypes = {
+    children: PropTypes.object.isRequired
   }
 
   constructor(props) {
     super(props)
+
+    this.state = {}
   }
 
   render() {
     return (
-      <div className="app-wrap-profiles">
-          <StatusBar />
-        <div className="container-fluid site-wrapper">
-          <nav className="navbar navbar-toggleable-md navbar-light">
-            <Link to="/profiles" className="navbar-brand">
-              <img src="/images/app-icon-profiles.png" />
-            </Link>
-            <div className="navbar-collapse" id="navbarSupportedContent">
-              <ul className="nav navbar-nav m-b-20">
-                <li className="navbar-text">
-                  Profiles
-                </li>
-                <li className="navbar-text navbar-text-secondary-profiles">
-                  Utility
-                </li>
-              </ul>
-              <SearchBar placeholder="Search for people" />
-            </div>
-          </nav>
+      <div>
+        <Navbar activeTab="avatar" />
           {this.props.children}
-        </div>
       </div>
     )
   }

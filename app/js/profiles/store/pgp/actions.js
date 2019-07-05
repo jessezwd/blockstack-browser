@@ -1,7 +1,7 @@
 import * as types from './types'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('profiles/store/pgp/actions.js')
+const logger = log4js.getLogger(__filename)
 
 function loadingPGPKey(identifier) {
   return {
@@ -27,7 +27,7 @@ function loadedPGPKey(identifier, key) {
 }
 
 function loadPGPPublicKey(contentUrl, identifier) {
-  logger.trace('loadPGPPublicKey')
+  logger.info('loadPGPPublicKey')
   return dispatch => {
     dispatch(loadingPGPKey(identifier))
     return proxyFetch(contentUrl)
@@ -37,8 +37,9 @@ function loadPGPPublicKey(contentUrl, identifier) {
       })
       .catch((error) => {
         logger.error('loadPGPPublicKey: error', error)
-        const errorMessage = `We were unable to load the PGP key at ${contentUrl}. Please make sure the server is online and uses https.`
-        dispatch(loadingPGPKeyError(identifier,  errorMessage))
+        const msg = `We were unable to load the PGP key at ${contentUrl}.` +
+                    ' Please make sure the server is online and uses https.'
+        dispatch(loadingPGPKeyError(identifier,  msg))
       })
   }
 }

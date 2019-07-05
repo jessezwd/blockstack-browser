@@ -1,11 +1,12 @@
-import React, { Component, PropTypes } from 'react'
-import { Link } from 'react-router'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
 import Modal from 'react-modal'
+import ReactTooltip from 'react-tooltip'
 import { PGPActions } from '../store/pgp'
 
-import { getWebAccountTypes } from '../../utils'
+import { getWebAccountTypes } from '@utils'
 
 function mapStateToProps(state) {
   return {
@@ -20,12 +21,17 @@ function mapDispatchToProps(dispatch) {
 
 class PGPAccountItem extends Component {
   static propTypes = {
+    editing: PropTypes.bool.isRequired,
     listItem: PropTypes.bool.isRequired,
     service: PropTypes.string.isRequired,
     identifier: PropTypes.string.isRequired,
     contentUrl: PropTypes.string,
     loadPGPPublicKey: PropTypes.func.isRequired,
-    pgpPublicKeys: PropTypes.object
+    pgpPublicKeys: PropTypes.object,
+    onClick: PropTypes.func,
+    verified: PropTypes.bool,
+    placeholder: PropTypes.bool,
+    api: PropTypes.object.isRequired
   }
 
   constructor(props) {
@@ -76,16 +82,38 @@ class PGPAccountItem extends Component {
 
   getIdentifier() {
     let identifier = this.props.identifier
-    if (identifier.length >= 15) {
-      identifier = identifier.slice(0, 15) + '...'
+    if (identifier.length >= 40) {
+      identifier = `${identifier.slice(0, 40)}...`
     }
     return identifier
+  }
+
+  getPlaceholderText(service) {
+    let placeholder = ''
+    if (service === 'pgp' || service === 'ssh') {
+      placeholder = (
+        <span className="app-account-service font-weight-normal">
+          Prove your {service.toUpperCase()} key
+        </span>
+      )
+    }
+    return placeholder    
+  }
+
+  onClick = () => {
+    this.props.onClick(this.props.service)
   }
 
   render() {
     const identifier = this.props.identifier
     const webAccountTypes = getWebAccountTypes(this.props.api)
     const pgpPublicKeys = this.props.pgpPublicKeys
+    const verified = this.props.verified
+    const verifiedClass = verified ? 'verified' : 'pending'
+    const placeholderClass = this.props.placeholder ? 'placeholder' : ''
+    const identifierType = (this.props.service === 'pgp' || this.props.service === 'ssh') ? 'Key' : 'Address'
+    const closeOnClick = true
+
     let loading = false
     let error = false
     let key = null
@@ -103,52 +131,80 @@ class PGPAccountItem extends Component {
 
     if (this.props.listItem === true) {
       return (
-        <li>
+        <li className={`clickable ${verifiedClass} ${placeholderClass}`} onClick={this.onClick}>
           <Modal
             isOpen={this.state.modalIsOpen}
             contentLabel="PGP Key"
-            shouldCloseOnOverlayClick={true}
+            shouldCloseOnOverlayClick={closeOnClick}
             style={{overlay: {zIndex: 10}}}
-            className="container-fluid react-modal-pgp">
+            className="container-fluid react-modal-pgp"
+          >
             <button onClick={this.closeModal}>close</button>
             <h2>PGP Key</h2>
             <p>Fingerprint: {identifier}</p>
-            <div> { loading
+            <div> {loading
               ?
-              <textarea className="form-control" readOnly="true" rows="10"
-                value="Loading...">
+              <textarea
+                className="form-control"
+                readOnly="true"
+                rows="10"
+                value="Loading..."
+              >
               </textarea>
               :
               <div>
-              { error ?
-                <textarea className="form-control" readOnly="true" rows="10"
-                  value={error}>
+              {error ?
+                <textarea
+                  className="form-control"
+                  readOnly="true"
+                  rows="10"
+                  value={error}
+                >
                 </textarea>
                 :
-            <textarea className="form-control" readOnly="true" rows="10"
-              value={key}>
-            </textarea>
+                <textarea
+                  className="form-control"
+                  readOnly="true"
+                  rows="10"
+                  value={key}
+                >
+                </textarea>
             }
               </div>
             }
             </div>
           </Modal>
-          <a href="#" onClick={this.openModal} data-toggle="tooltip"
-            title={webAccountTypes[this.props.service].label}>
-            {this.props.verified ?
-            <span className="fa-stack fa-lg">
-              <i className="fa fa-certificate fa-stack-2x fa-green" />
-              <i className={`fa ${this.getIconClass()} fa-stack-1x`} />
-            </span>
-            :
-            <span className="fa-stack fa-lg">
-              <i className={`fa ${this.getIconClass()} fa-stack-1x`} />
-            </span>
-            }
+          <ReactTooltip place="top" type="dark" effect="solid" id={`verified-${this.props.service}`} className="text-center">
+            {this.props.verified ? 'Verified' : 'Pending...'}
+          </ReactTooltip>
+
+          <span className="">
+            <i className={`fa fa-fw ${this.getIconClass()} fa-lg`} />
+          </span>
+
+          {!this.props.placeholder && (
             <span className="app-account-identifier">
-              {identifier}
+              {this.getIdentifier()}
             </span>
-          </a>
+          )}
+
+          {(!this.props.placeholder && this.props.editing) && (
+            <span className="">
+              <i className="fa fa-fw fa-pencil" />
+            </span>
+          )}
+
+          {!this.props.placeholder && (
+            <span className="app-account-service font-weight-normal">
+              {webAccountTypes[this.props.service].label}
+            </span>
+          )}
+
+          {this.props.placeholder && (
+            <span className="app-account-service font-weight-normal">
+              Add your {webAccountTypes[this.props.service].label} {identifierType.toLowerCase()}
+            </span>
+          )}
         </li>
       )
     } else {

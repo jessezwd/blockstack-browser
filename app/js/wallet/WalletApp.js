@@ -1,13 +1,13 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
-import { Link } from 'react-router'
 
-import WalletSidebar from './components/WalletSidebar'
-import StatusBar from '../components/StatusBar'
+import SecondaryNavBar from '@components/SecondaryNavBar'
+import Navbar from '@components/Navbar'
 
 
-function mapStateToProps(state) {
+function mapStateToProps() {
   return {
   }
 }
@@ -18,6 +18,7 @@ function mapDispatchToProps(dispatch) {
 
 class WalletApp extends Component {
   static propTypes = {
+    children: PropTypes.object.isRequired
   }
 
   constructor(props) {
@@ -31,31 +32,21 @@ class WalletApp extends Component {
     const activeTabUrl = `/wallet/${childPath}`
 
     return (
-      <div className="body-inner bkg-green">
-          <StatusBar />
-        <div className="site-wrapper">
-          <nav className="navbar navbar-toggleable-md navbar-light">
-            <Link to="/wallet/receive" className="navbar-brand">
-              <img src="../images/app-icon-wallet-card-flat.png" />
-            </Link>
-            <div className="navbar-collapse" id="navbarSupportedContent">
-              <ul className="nav navbar-nav m-b-20">
-                <li className="navbar-text">
-                  Wallet
-                </li>
-                <li className="navbar-text navbar-text-secondary-wallet">
-                  Utility
-                </li>
-              </ul>
-            </div>
-          </nav>  
-          <div className="container wallet-container">
-            <div className="col-md-5 wallet-sidebar">
-              <WalletSidebar activeTab={activeTabUrl} />
-            </div>
-            <div className="col-md-7 wallet-content">
-              {this.props.children}
-            </div>
+      <div>
+        <Navbar activeTab="wallet" />
+        <SecondaryNavBar
+          leftButtonTitle="Receive"
+          leftButtonLink="/wallet/receive"
+          isLeftActive={(activeTabUrl === '/wallet/receive')}
+          rightButtonTitle="Send"
+          rightButtonLink="/wallet/send"
+          isRightActive={(activeTabUrl === '/wallet/send')}
+          activeClass="active-wallet"
+          customButtonClass="btn-wallet"
+        />
+        <div className="container-fluid col-centered form-container-secondary">
+          <div>
+            {this.props.children}
           </div>
         </div>
       </div>

@@ -1,11 +1,11 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
-import { Link } from 'react-router'
 
 import {
-  isABlockstackName, isABlockstackIDName, isABlockstackAppName
-} from '../../utils/name-utils'
+  isABlockstackName, isABlockstackIDName
+} from '@utils/name-utils'
 import { SearchActions } from '../store/search'
 
 function mapStateToProps(state) {
@@ -18,7 +18,7 @@ function mapDispatchToProps(dispatch) {
   return bindActionCreators(SearchActions, dispatch)
 }
 
-class SearchBar extends Component {
+export class SearchBar extends Component {
   static propTypes = {
     query: PropTypes.string.isRequired,
     placeholder: PropTypes.string.isRequired,
@@ -44,7 +44,7 @@ class SearchBar extends Component {
 
   componentWillMount() {
     if (!/^\/profiles\/search\/.*$/.test(location.pathname)) {
-      this.props.updateQuery("")
+      this.props.updateQuery('')
     }
   }
 
@@ -57,7 +57,7 @@ class SearchBar extends Component {
   }
 
   componentWillUnmount() {
-    this.props.updateQuery("")
+    this.props.updateQuery('')
   }
 
   submitQuery(query) {
@@ -87,12 +87,14 @@ class SearchBar extends Component {
   render() {
     return (
       <div className="nav-search m-b-40">
-        <input type="text"
-          className="form-control form-control-sm input-special"
+        <input
+          type="text"
+          className="form-control form-control-sm"
           placeholder={this.state.placeholder}
           name="query" value={this.state.query}
           onChange={this.onQueryChange}
-          onKeyPress={this.onKeyPress} />
+          onKeyPress={this.onKeyPress}
+        />
       </div>
     )
   }

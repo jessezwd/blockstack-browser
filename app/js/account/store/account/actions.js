@@ -1,47 +1,48 @@
 import { HDNode } from 'bitcoinjs-lib'
-import bip39 from 'bip39'
+
 import { randomBytes } from 'crypto'
-import { authorizationHeaderValue, btcToSatoshis, encrypt,
-  getIdentityPrivateKeychain,
-  getBitcoinPrivateKeychain,
-  getIdentityOwnerAddressNode,
-  getBitcoinAddressNode } from '../../../utils'
+import {
+  authorizationHeaderValue,
+  btcToSatoshis,
+  satoshisToBtc,
+  encrypt,
+  getInsightUrls,
+  getBlockchainIdentities
+} from '@utils'
+import { isCoreEndpointDisabled } from '@utils/window-utils'
+import { transactions, config, network } from 'blockstack'
+
+import roundTo from 'round-to'
 import * as types from './types'
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('account/store/account/actions.js')
+const logger = log4js.getLogger(__filename)
 
-function createAccount(encryptedBackupPhrase, masterKeychain) {
-  const identityPrivateKeychainNode = getIdentityPrivateKeychain(masterKeychain)
-  const bitcoinPrivateKeychainNode = getBitcoinPrivateKeychain(masterKeychain)
+const doVerifyRecoveryCode = () => dispatch =>
+  dispatch({
+    type: types.RECOVERY_CODE_VERIFIED
+  })
 
-  const identityPublicKeychainNode = identityPrivateKeychainNode.neutered()
-  const identityPublicKeychain = identityPublicKeychainNode.toBase58()
+const updateEmail = email => dispatch =>
+  dispatch({
+    type: types.UPDATE_EMAIL_ADDRESS,
+    email
+  })
 
-  const bitcoinPublicKeychainNode = bitcoinPrivateKeychainNode.neutered()
-  const bitcoinPublicKeychain = bitcoinPublicKeychainNode.toBase58()
+function createAccount(
+  encryptedBackupPhrase,
+  masterKeychain,
+  identitiesToGenerate
+) {
+  logger.debug(`createAccount: identitiesToGenerate: ${identitiesToGenerate}`)
 
-  const firstBitcoinAddress = getBitcoinAddressNode(bitcoinPublicKeychainNode).getAddress()
-
-  const ADDRESSES_TO_GENERATE = 9
-  const identityAddresses = []
-  const identityKeypairs = []
-
-  // We pre-generate a number of identity addresses so that we
-  // don't have to prompt the user for the password on each new profile
-  for (let addressIndex = 0; addressIndex < ADDRESSES_TO_GENERATE; addressIndex++) {
-    const identityOwnerAddressNode =
-    getIdentityOwnerAddressNode(identityPrivateKeychainNode, addressIndex)
-    const identityAddress = identityOwnerAddressNode.getAddress()
-    identityAddresses.push(identityAddress)
-    const identityKey = identityOwnerAddressNode.keyPair.d.toBuffer(32).toString('hex')
-    const identityKeyID = identityOwnerAddressNode.keyPair.getPublicKeyBuffer().toString('hex')
-    identityKeypairs.push({
-      key: identityKey,
-      keyID: identityKeyID,
-      address: identityAddress
-    })
-  }
+  const {
+    identityPublicKeychain,
+    bitcoinPublicKeychain,
+    firstBitcoinAddress,
+    identityAddresses,
+    identityKeypairs
+  } = getBlockchainIdentities(masterKeychain, identitiesToGenerate)
 
   return {
     type: types.CREATE_ACCOUNT,
@@ -90,6 +91,48 @@ function updateBalances(balances) {
   }
 }
 
+function buildTransaction(recipientAddress) {
+  return {
+    type: types.BUILD_TRANSACTION,
+    payload: recipientAddress
+  }
+}
+
+function buildTransactionSuccess(txHex) {
+  return {
+    type: types.BUILD_TRANSACTION_SUCCESS,
+    payload: txHex
+  }
+}
+
+function buildTransactionError(error) {
+  return {
+    type: types.BUILD_TRANSACTION_ERROR,
+    payload: error
+  }
+}
+
+function broadcastTransaction(txHex) {
+  return {
+    type: types.BROADCAST_TRANSACTION,
+    payload: txHex
+  }
+}
+
+function broadcastTransactionSuccess(txId) {
+  return {
+    type: types.BROADCAST_TRANSACTION_SUCCESS,
+    payload: txId
+  }
+}
+
+function broadcastTransactionError(error) {
+  return {
+    type: types.BROADCAST_TRANSACTION_ERROR,
+    payload: error
+  }
+}
+
 function resetCoreBalanceWithdrawal() {
   return {
     type: types.RESET_CORE_BALANCE_WITHDRAWAL
@@ -116,9 +159,16 @@ function withdrawCoreBalanceError(error) {
   }
 }
 
-function promptedForEmail() {
+function promptedForEmail(email = null) {
   return {
-    type: types.PROMPTED_FOR_EMAIL
+    type: types.PROMPTED_FOR_EMAIL,
+    email
+  }
+}
+
+function connectedStorage() {
+  return {
+    type: types.CONNECTED_STORAGE
   }
 }
 
@@ -129,84 +179,111 @@ function updateViewedRecoveryCode() {
 }
 
 function displayedRecoveryCode() {
-  logger.trace('displayedRecoveryCode')
+  logger.info('displayedRecoveryCode')
   return dispatch => {
     dispatch(updateViewedRecoveryCode())
   }
 }
 
-function emailKeychainBackup(email, encryptedPortalKey) {
-  logger.debug(`emailKeychainBackup: ${email}`)
+function emailNotifications(email, optIn) {
+  logger.debug(`emailNotifications: ${email}`)
   return dispatch => {
-    dispatch(promptedForEmail())
-    const requestHeaders = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    }
-
-    const requestBody = {
-      email,
-      encryptedPortalKey
-    }
+    dispatch(promptedForEmail(email))
 
     const options = {
       method: 'POST',
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify({ email }),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      }
     }
-    // const emailBackupUrl = 'http://localhost:2888/backup'
-    const emailBackupUrl = 'https://blockstack-portal-emailer.appartisan.com/backup'
 
-    return fetch(emailBackupUrl, options)
-    .then(() => {
-      logger.debug(`emailKeychainBackup: backup sent to ${email}`)
-    }, (error) => {
-      logger.error('emailKeychainBackup: error backing up keychain', error)
-    }).catch(error => {
-      logger.error('emailKeychainBackup: error backing up keychain', error)
-    })
+    const url = `
+      https://blockstack-portal-emailer.appartisan.com/notifications?mailingListOptIn=${
+        optIn ? 'true' : 'false'
+      }
+    `
+
+    return fetch(url, options)
+      .then(
+        () => {
+          logger.debug(
+            `emailNotifications: registered ${email} for notifications`
+          )
+        },
+        error => {
+          logger.error('emailNotifications: error', error)
+        }
+      )
+      .catch(error => {
+        logger.error('emailNotifications: error', error)
+      })
   }
 }
 
 function skipEmailBackup() {
-  logger.trace('skipEmailBackup')
+  logger.info('skipEmailBackup')
   return dispatch => {
     dispatch(promptedForEmail())
+  }
+}
+
+function storageIsConnected() {
+  logger.info('storageConnected')
+  return dispatch => {
+    dispatch(connectedStorage())
   }
 }
 
 function refreshCoreWalletBalance(addressBalanceUrl, coreAPIPassword) {
   return dispatch => {
-    const headers = {"Authorization": authorizationHeaderValue(coreAPIPassword) }
-    fetch(addressBalanceUrl, { headers: headers })
-    .then((response) => response.text())
-    .then((responseText) => JSON.parse(responseText))
-    .then((responseJson) => {
-      const balance = responseJson.balance.bitcoin;
-      dispatch(
-        updateCoreWalletBalance(balance)
-      )
-    })
-    .catch((error) => {
-      logger.error('refreshCoreWalletBalance: error refreshing balance', error)
-    })
+    if (isCoreEndpointDisabled(addressBalanceUrl)) {
+      logger.debug('Mocking core wallet balance in webapp build')
+      dispatch(updateCoreWalletBalance(0))
+      return Promise.resolve()
+    }
+
+    logger.info('refreshCoreWalletBalance: Beginning refresh...')
+    logger.debug(
+      `refreshCoreWalletBalance: addressBalanceUrl: ${addressBalanceUrl}`
+    )
+    const headers = { Authorization: authorizationHeaderValue(coreAPIPassword) }
+    return fetch(addressBalanceUrl, { headers })
+      .then(response => response.text())
+      .then(responseText => JSON.parse(responseText))
+      .then(responseJson => {
+        const balance = responseJson.balance.bitcoin
+        logger.debug(`refreshCoreWalletBalance: balance is ${balance}.`)
+        dispatch(updateCoreWalletBalance(balance))
+      })
+      .catch(error => {
+        logger.error(
+          'refreshCoreWalletBalance: error refreshing balance',
+          error
+        )
+      })
   }
 }
 
 function getCoreWalletAddress(walletPaymentAddressUrl, coreAPIPassword) {
   return dispatch => {
-    const headers = { 'Authorization': authorizationHeaderValue(coreAPIPassword) }
-    fetch(walletPaymentAddressUrl, { headers })
-    .then((response) => response.text())
-    .then((responseText) => JSON.parse(responseText))
-    .then((responseJson) => {
-      const address = responseJson.address
-      dispatch(
-        updateCoreWalletAddress(address)
-      )
-    }).catch((error) => {
-      logger.error('getCoreWalletAddress: error fetching address', error)
-    })
+    if (isCoreEndpointDisabled(walletPaymentAddressUrl)) {
+      logger.error('Cannot use core wallet if core is disable')
+      return Promise.resolve()
+    }
+
+    const headers = { Authorization: authorizationHeaderValue(coreAPIPassword) }
+    return fetch(walletPaymentAddressUrl, { headers })
+      .then(response => response.text())
+      .then(responseText => JSON.parse(responseText))
+      .then(responseJson => {
+        const address = responseJson.address
+        dispatch(updateCoreWalletAddress(address))
+      })
+      .catch(error => {
+        logger.error('getCoreWalletAddress: error fetching address', error)
+      })
   }
 }
 
@@ -216,111 +293,244 @@ function resetCoreWithdrawal() {
   }
 }
 
-function withdrawBitcoinFromCoreWallet(coreWalletWithdrawUrl, recipientAddress, amount, coreAPIPassword) {
+function buildBitcoinTransaction(
+  regTestMode,
+  paymentKey,
+  recipientAddress,
+  amountBTC
+) {
   return dispatch => {
-    dispatch(withdrawingCoreBalance(recipientAddress, amount))
-    const requestHeaders = {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      'Authorization': authorizationHeaderValue(coreAPIPassword)
+    logger.info('Building bitcoin transaction')
+    dispatch(buildTransaction(recipientAddress))
+
+    if (regTestMode) {
+      logger.info('Changing recipient address to regtest address')
+      config.network = network.defaults.LOCAL_REGTEST
+      config.network.blockstackAPIUrl = 'http://localhost:6270'
+      recipientAddress = config.network.coerceAddress(recipientAddress)
+    }
+    const amountSatoshis = Math.floor(amountBTC * 1e8)
+
+    logger.debug(
+      `Building transaction to send ${amountSatoshis} satoshis to ${recipientAddress}`
+    )
+    return transactions
+      .makeBitcoinSpend(recipientAddress, paymentKey, amountSatoshis)
+      .then(txHex => {
+        logger.info('Succesfully built bitcoin transaction')
+        dispatch(buildTransactionSuccess(txHex))
+      })
+      .catch(err => {
+        logger.error(`Failed to build bitcoin transaction: ${err}`)
+        dispatch(buildTransactionError(err.message || err.toString()))
+      })
+  }
+}
+
+function broadcastBitcoinTransaction(regTestMode, txHex) {
+  return dispatch => {
+    logger.info('Broadcasting bitcoin transaction')
+    logger.debug('Transaction hex:', txHex)
+    dispatch(broadcastTransaction())
+
+    if (regTestMode) {
+      logger.info('Using regtest network to broadcast transaction')
+      config.network = network.defaults.LOCAL_REGTEST
+      config.network.blockstackAPIUrl = 'http://localhost:6270'
     }
 
-    const requestBody = JSON.stringify({
-      address: recipientAddress,
-      min_confs: 0,
-      amount: btcToSatoshis(amount)
-    })
+    return config.network
+      .broadcastTransaction(txHex)
+      .then(res => {
+        logger.info(`Broadcasting bitcoin transaction succesful: ${res}`)
+        dispatch(broadcastTransactionSuccess())
+      })
+      .catch(err => {
+        logger.error(`Failed to broadcast bitcoin transaction: ${err}`)
+        dispatch(broadcastTransactionError(err.message || err.toString()))
+      })
+  }
+}
 
-    fetch(coreWalletWithdrawUrl, {
+function withdrawBitcoinFromCoreWallet(
+  coreWalletWithdrawUrl,
+  recipientAddress,
+  coreAPIPassword,
+  amount = null,
+  paymentKey = null
+) {
+  return dispatch => {
+    if (isCoreEndpointDisabled(coreWalletWithdrawUrl)) {
+      dispatch(
+        withdrawCoreBalanceError(
+          'Core wallet withdrawls not allowed in the simple webapp build'
+        )
+      )
+      return Promise.resolve()
+    }
+
+    const requestBody = {
+      address: recipientAddress,
+      min_confs: 0
+    }
+
+    if (amount !== null) {
+      const satoshisAmount = btcToSatoshis(amount)
+      const roundedSatoshiAmount = roundTo(satoshisAmount, 0)
+      logger.debug(
+        `withdrawBitcoinFromCoreWallet: ${roundedSatoshiAmount} to ${recipientAddress}`
+      )
+      requestBody.amount = roundedSatoshiAmount
+      dispatch(withdrawingCoreBalance(recipientAddress, amount))
+    } else {
+      dispatch(withdrawingCoreBalance(recipientAddress, 1))
+      logger.debug(
+        `withdrawBitcoinFromCoreWallet: send all money to ${recipientAddress}`
+      )
+    }
+
+    const requestHeaders = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: authorizationHeaderValue(coreAPIPassword)
+    }
+
+    if (paymentKey) {
+      // Core registers with an uncompressed address,
+      // browser expects compressed addresses,
+      // we need to add a suffix to indicate to core
+      // that it should use a compressed addresses
+      // see https://en.bitcoin.it/wiki/Wallet_import_format
+      // and https://github.com/blockstack/blockstack-browser/issues/607
+      const compressedPublicKeySuffix = '01'
+      const key = `${paymentKey}${compressedPublicKeySuffix}`
+      requestBody.payment_key = key
+      logger.debug('withdrawBitcoinFromCoreWallet: Using provided payment key')
+    } else {
+      logger.debug(
+        'withdrawBitcoinFromCoreWallet: No payment key, using core wallet'
+      )
+    }
+
+    return fetch(coreWalletWithdrawUrl, {
       method: 'POST',
       headers: requestHeaders,
-      body: requestBody
+      body: JSON.stringify(requestBody)
     })
-    .then((response) => response.text())
-    .then((responseText) => JSON.parse(responseText))
-    .then((responseJson) => {
-      if (responseJson['error']) {
-        dispatch(withdrawCoreBalanceError(responseJson['error']))
-      } else {
-        dispatch(withdrawCoreBalanceSuccess())
-      }
-    })
-    .catch((error) => {
-      logger.error('withdrawBitcoinFromCoreWallet:', error)
-      dispatch(withdrawCoreBalanceError(error))
-    })
-  }
-}
-
-
-function refreshBalances(addressBalanceUrl, addresses) {
-  return dispatch => {
-    let results = []
-    addresses.forEach((address) => {
-      // fetch balances from https://explorer.blockstack.org/insight-api/addr/{address}/?noTxList=1
-      // parse results from: {"addrStr":"1Fvoya7XMvzfpioQnzaskndL7YigwHDnRE","balance":0.02431567,"balanceSat":2431567,"totalReceived":38.82799913,"totalReceivedSat":3882799913,"totalSent":38.80368346,"totalSentSat":3880368346,"unconfirmedBalance":0,"unconfirmedBalanceSat":0,"unconfirmedTxApperances":0,"txApperances":2181}
-      const url = addressBalanceUrl.replace('{address}', address)
-      fetch(url).then((response) => response.text())
-      .then((responseText) => JSON.parse(responseText))
-      .then((responseJson) => {
-        results.push({
-          address,
-          balance: responseJson['balance']
-        })
-
-        if (results.length >= addresses.length) {
-          let balances = {}
-          let total = 0.0
-
-          for (let i = 0; i < results.length; i++) {
-            let address = results[i]['address']
-            if (!balances.hasOwnProperty(address)) {
-              let balance = results[i]['balance']
-              total = total + balance
-              balances[address] = balance
-            } else {
-              console.warn(`Duplicate address ${address} in addresses array`)
-            }
-          }
-
-          balances['total'] = total
-
-          dispatch(
-            updateBalances(balances)
-          )
+      .then(response => response.text())
+      .then(responseText => JSON.parse(responseText))
+      .then(responseJson => {
+        if (responseJson.error) {
+          dispatch(withdrawCoreBalanceError(responseJson.error))
+        } else {
+          dispatch(withdrawCoreBalanceSuccess())
         }
       })
-    })
-    .catch((error) => {
-      logger.error('refreshBalances: error', error)
-    })
+      .catch(error => {
+        logger.error('withdrawBitcoinFromCoreWallet:', error)
+        dispatch(withdrawCoreBalanceError(error))
+      })
   }
 }
 
-function initializeWallet(password, backupPhrase, email = null) {
+function refreshBalances(balanceURL, addresses) {
   return dispatch => {
-    let masterKeychain = null
-    if (backupPhrase && bip39.validateMnemonic(backupPhrase)) {
-      const seedBuffer = bip39.mnemonicToSeed(backupPhrase)
-      masterKeychain = HDNode.fromSeedBuffer(seedBuffer)
-    } else { // Create a new wallet
-      const entropy = randomBytes(32)
-      backupPhrase = bip39.entropyToMnemonic(entropy)
-      const seedBuffer = bip39.mnemonicToSeed(backupPhrase)
-      masterKeychain = HDNode.fromSeedBuffer(seedBuffer)
-    }
-    return encrypt(new Buffer(backupPhrase), password).then((ciphertextBuffer) => {
-      const encryptedBackupPhrase = ciphertextBuffer.toString('hex')
-      dispatch(
-        createAccount(encryptedBackupPhrase, masterKeychain, email)
-      )
-    })
+    const results = []
+    return Promise.all(
+      addresses.map(address => {
+        logger.debug( 
+          `refreshBalances: refreshing balances for address ${address}`
+        )
+
+        return fetch(`${balanceURL}${address}`)
+          .then(response => response.text())
+          .then(response => {
+            results.push({
+              address,
+              balance: satoshisToBtc(parseInt(response))
+            })
+
+            if (results.length >= addresses.length) {
+              let balances = {}
+              let total = 0.0
+
+              for (let i = 0; i < results.length; i++) {
+                const thisAddress = results[i].address
+                if (!balances.hasOwnProperty(thisAddress)) {
+                  const balance = results[i].balance
+                  total = total + balance
+                  balances[thisAddress] = balance
+                } else {
+                  logger.error(
+                    `refreshBalances: Duplicate address ${thisAddress} in addresses array`
+                  )
+                }
+              }
+              balances.total = total
+              dispatch(updateBalances(balances))
+            }
+          })
+          .catch(error => {
+            logger.error(
+              `refreshBalances: error fetching ${address} balance`,
+              error
+            )
+          })
+      })
+    )
+      .then(() => {
+        logger.debug(
+          'refreshBalances: done refreshing balances for all addresses'
+        )
+      })
+      .catch(error => {
+        logger.error(
+          'refreshBalances: error refreshing balances for addresses',
+          error
+        )
+      })
   }
+}
+
+const initializeWallet = (
+  password,
+  backupPhrase,
+  identitiesToGenerate = 1
+) => async dispatch => {
+  const bip39 = await import(/* webpackChunkName: 'bip39' */ 'bip39')
+  logger.debug('initializeWallet started')
+  let masterKeychain = null
+  if (backupPhrase && bip39.validateMnemonic(backupPhrase)) {
+    const seedBuffer = bip39.mnemonicToSeed(backupPhrase)
+    logger.debug(`seedBuffer: ${seedBuffer}`)
+    masterKeychain = HDNode.fromSeedBuffer(seedBuffer)
+    logger.debug(`masterKeychain: ${masterKeychain}`)
+  } else {
+    logger.debug('Create a new wallet')
+    const STRENGTH = 128 // 128 bits generates a 12 word mnemonic
+    backupPhrase = bip39.generateMnemonic(STRENGTH, randomBytes)
+    const seedBuffer = bip39.mnemonicToSeed(backupPhrase)
+    masterKeychain = HDNode.fromSeedBuffer(seedBuffer)
+  }
+  const ciphertextBuffer = await encrypt(new Buffer(backupPhrase), password)
+  logger.debug(`ciphertextBuffer: ${ciphertextBuffer}`)
+  const encryptedBackupPhrase = ciphertextBuffer.toString('hex')
+  logger.debug(`encryptedBackupPhrase: ${encryptedBackupPhrase}`)
+  return dispatch(
+    createAccount(encryptedBackupPhrase, masterKeychain, identitiesToGenerate)
+  )
 }
 
 function newBitcoinAddress() {
   return {
     type: types.NEW_BITCOIN_ADDRESS
+  }
+}
+
+function newIdentityAddress(newIdentityKeypair) {
+  return {
+    type: types.NEW_IDENTITY_ADDRESS,
+    keypair: newIdentityKeypair
   }
 }
 
@@ -331,7 +541,7 @@ function incrementIdentityAddressIndex() {
 }
 
 function usedIdentityAddress() {
-  logger.trace('usedIdentityAddress')
+  logger.info('usedIdentityAddress')
   return dispatch => {
     dispatch(incrementIdentityAddressIndex())
   }
@@ -347,13 +557,19 @@ const AccountActions = {
   getCoreWalletAddress,
   refreshCoreWalletBalance,
   resetCoreWithdrawal,
+  buildBitcoinTransaction,
+  broadcastBitcoinTransaction,
   withdrawBitcoinFromCoreWallet,
-  emailKeychainBackup,
+  emailNotifications,
   skipEmailBackup,
+  storageIsConnected,
   updateViewedRecoveryCode,
+  doVerifyRecoveryCode,
   incrementIdentityAddressIndex,
   usedIdentityAddress,
-  displayedRecoveryCode
+  displayedRecoveryCode,
+  newIdentityAddress,
+  updateEmail
 }
 
 export default AccountActions

@@ -1,23 +1,30 @@
-import React, { Component, PropTypes } from 'react'
+import PropTypes from 'prop-types'
+import React, { Component } from 'react'
 import { bindActionCreators } from 'redux'
 import { connect } from 'react-redux'
 import { Person } from 'blockstack'
-
+import Modal from 'react-modal'
+import SecondaryNavBar from '@components/SecondaryNavBar'
+import Alert from '@components/Alert'
 import IdentityItem from './components/IdentityItem'
+import InputGroup from '@components/InputGroup'
 import { IdentityActions } from './store/identity'
 import { AccountActions }  from '../account/store/account'
 
 import log4js from 'log4js'
 
-const logger = log4js.getLogger('profiles/AllProfilesPage.js')
+const logger = log4js.getLogger(__filename)
 
 function mapStateToProps(state) {
   return {
     localIdentities: state.profiles.identity.localIdentities,
-    namesOwned: state.profiles.identity.namesOwned,
+    defaultIdentity: state.profiles.identity.default,
+    createProfileError: state.profiles.identity.createProfileError,
+    isProcessing: state.profiles.identity.isProcessing,
     identityAddresses: state.account.identityAccount.addresses,
     nextUnusedAddressIndex: state.account.identityAccount.addressIndex,
-    api: state.settings.api
+    api: state.settings.api,
+    encryptedBackupPhrase: state.account.encryptedBackupPhrase
   }
 }
 
@@ -25,97 +32,207 @@ function mapDispatchToProps(dispatch) {
   return bindActionCreators(Object.assign({}, IdentityActions, AccountActions), dispatch)
 }
 
-class IdentityPage extends Component {
+class AllProfilesPage extends Component {
   static propTypes = {
-    localIdentities: PropTypes.object.isRequired,
-    createNewIdentityFromDomain: PropTypes.func.isRequired,
+    localIdentities: PropTypes.array.isRequired,
+    defaultIdentity: PropTypes.number.isRequired,
+    createNewProfile: PropTypes.func.isRequired,
     refreshIdentities: PropTypes.func.isRequired,
-    namesOwned: PropTypes.array.isRequired,
     api: PropTypes.object.isRequired,
     identityAddresses: PropTypes.array.isRequired,
-    nextUnusedAddressIndex: PropTypes.number.isRequired
+    nextUnusedAddressIndex: PropTypes.number.isRequired,
+    encryptedBackupPhrase: PropTypes.string.isRequired,
+    setDefaultIdentity: PropTypes.func.isRequired,
+    resetCreateNewProfileError: PropTypes.func.isRequired,
+    createProfileError: PropTypes.string,
+    router: PropTypes.object.isRequired,
+    isProcessing: PropTypes.boolean
   }
 
   constructor(props) {
     super(props)
-
     this.state = {
-      localIdentities: this.props.localIdentities
+      localIdentities: this.props.localIdentities,
+      passwordPromptIsOpen: false,
+      password: ''
     }
-
-    this.createNewProfile = this.createNewProfile.bind(this)
-    this.availableIdentityAddresses = this.availableIdentityAddresses.bind(this)
   }
 
   componentWillMount() {
+    logger.info('componentWillMount')
     this.props.refreshIdentities(
       this.props.api,
-      this.props.identityAddresses,
-      this.props.localIdentities,
-      this.props.namesOwned
-    )
+      this.props.identityAddresses)
   }
 
   componentWillReceiveProps(nextProps) {
+    logger.info('componentWillReceiveProps')
     this.setState({
       localIdentities: nextProps.localIdentities
     })
+
+    const currentIdentityCount = Object.keys(this.props.localIdentities).length
+
+    const newIdentityCount = Object.keys(nextProps.localIdentities).length
+    if (currentIdentityCount < newIdentityCount) {
+      this.setState({
+        password: ''
+      })
+      this.closePasswordPrompt()
+    }
   }
 
-  createNewProfile(event) {
+  onValueChange = (event) => {
+    this.setState({
+      [event.target.name]: event.target.value
+    })
+  }
+
+  setDefaultIdentity = (index) => {
+    this.props.setDefaultIdentity(index)
+  }
+
+  createNewProfile = (event) => {
+    logger.info('createNewProfile')
     event.preventDefault()
-    const ownerAddress = this.props.identityAddresses[this.props.nextUnusedAddressIndex]
-    logger.debug(`createNewProfile: ownerAddress: ${ownerAddress}`)
-    this.props.createNewIdentityFromDomain(ownerAddress, ownerAddress)
+
+    if (!this.props.isProcessing) {
+      const encryptedBackupPhrase = this.props.encryptedBackupPhrase
+      const password = this.state.password
+      const nextUnusedAddressIndex = this.props.nextUnusedAddressIndex
+
+      this.props.createNewProfile(
+        encryptedBackupPhrase,
+        password, nextUnusedAddressIndex
+      )
+    }
   }
 
-  availableIdentityAddresses() {
-    return this.props.nextUnusedAddressIndex + 1 <= this.props.identityAddresses.length
+  openPasswordPrompt = (event) => {
+    event.preventDefault()
+    this.props.resetCreateNewProfileError()
+    this.setState({
+      passwordPromptIsOpen: true
+    })
   }
+
+  closePasswordPrompt = (event) => {
+    if (event) {
+      event.preventDefault()
+    }
+    this.setState({
+      passwordPromptIsOpen: false
+    })
+  }
+
+  availableIdentityAddresses = () =>
+    this.props.nextUnusedAddressIndex + 1 <= this.props.identityAddresses.length
 
   render() {
-    return (
-      <div className="card-list-container profile-content-wrapper">
-        <div>
-          <h5 className="h5-landing">My Profiles</h5>
-        </div>
-        <div className="container card-list-container">
-          <ul className="card-wrapper">
-            {Object.keys(this.state.localIdentities).map((domainName) => {
-              const identity = this.state.localIdentities[domainName],
-                    person = new Person(identity.profile)
+    const createProfileError = this.props.createProfileError
+    const passwordPromptIsOpen = this.state.passwordPromptIsOpen
+    const gaiaBucketAddress = this.props.identityAddresses[0]
+    const profileUrlBase = `https://gaia.blockstack.org/hub/${gaiaBucketAddress}`
 
-                    if (identity.ownerAddress === domainName) {
-                      identity.canAddUsername = true
-                    } else {
-                      identity.canAddUsername = false
-                    }
-              if (identity.domainName) {
-                return (
-                  <IdentityItem key={identity.domainName}
-                    label={identity.domainName}
-                    pending={!identity.registered}
-                    avatarUrl={person.avatarUrl() || ''}
-                    url={`/profiles/${identity.domainName}/local`}
-                    ownerAddress={identity.ownerAddress}
-                    canAddUsername={identity.canAddUsername}
-                  />
-                )
+    return (
+      <div>
+        <Modal
+          isOpen={passwordPromptIsOpen}
+          onRequestClose={this.closePasswordPrompt}
+          contentLabel="Password Modal"
+          shouldCloseOnOverlayClick
+          style={{ overlay: { zIndex: 10 } }}
+          className="container-fluid"
+        >
+          <form onSubmit={this.createNewProfile}>
+            <h3 className="modal-heading">Enter your password to add another Blockstack ID</h3>
+            <div>
+              {createProfileError ?
+                <Alert key="1" message="Incorrect password" status="danger" />
+                :
+                null
               }
-            })}
-          </ul>
-        </div>
-        <div className="card-list-container m-t-30">
-          <button
-            className="btn btn-blue btn-lg" onClick={this.createNewProfile}
-            disabled={!this.availableIdentityAddresses()}
-          >
-            + Create
-          </button>
+            </div>
+            <InputGroup
+              name="password"
+              type="password"
+              label=""
+              placeholder="Password"
+              data={this.state}
+              onChange={this.onValueChange}
+              required
+            />
+            <button
+              className="btn btn-primary btn-block"
+              type="submit"
+              disabled={this.props.isProcessing}
+            >
+              {this.props.isProcessing ?
+                <span>Processing...</span>
+                :
+                <span>Add another ID</span>
+              }
+            </button>
+          </form>
+        </Modal>
+        <SecondaryNavBar
+          leftButtonTitle="Back"
+          leftButtonLink="/profiles"
+        />
+        <div className="m-t-40">
+          <div className="container-fluid">
+            <ul className="card-wrapper">
+                  {this.state.localIdentities.map((identity, index) => {
+                    const person = new Person(identity.profile)
+
+                    if (identity.username) {
+                      identity.canAddUsername = false
+                    } else {
+                      identity.canAddUsername = true
+                    }
+                    return (
+                      <IdentityItem
+                        key={index}
+                        index={index}
+                        username={identity.username}
+                        pending={identity.usernamePending}
+                        avatarUrl={person.avatarUrl() || ''}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          this.setDefaultIdentity(index)
+                        }}
+                        ownerAddress={identity.ownerAddress}
+                        canAddUsername={identity.canAddUsername}
+                        isDefault={index === this.props.defaultIdentity}
+                        router={this.props.router}
+                        profileUrl={`${profileUrlBase}/${index}/profile.json`}
+                      />
+                    )
+                  })}
+            </ul>
+          </div>
+          <div className="container-fluid">
+            <div className="row m-t-40">
+              <div className="col">
+                <button
+                  className="btn btn-primary"
+                  onClick={this.openPasswordPrompt}
+                >
+                  Add another ID
+                </button>
+              </div>
+            </div>
+            <div className="row m-t-20">
+              <p className="col form-text text-muted">
+                Have you recovered and are missing IDs? Just add them
+                back by using the "Add another ID" for each ID.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     )
   }
 }
 
-export default connect(mapStateToProps, mapDispatchToProps)(IdentityPage)
+export default connect(mapStateToProps, mapDispatchToProps)(AllProfilesPage)
